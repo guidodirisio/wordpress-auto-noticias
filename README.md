@@ -1,0 +1,1 @@
+# wordpress-auto-noticias
