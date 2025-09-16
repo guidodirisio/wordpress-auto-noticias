@@ -1,10 +1,11 @@
 from pathlib import Path
 
-# Código actualizado con User-Agent en fetch_url
+# Código corregido usando urllib.request en lugar de request_kwargs
 import os
 import random
 import requests
 import trafilatura
+import urllib.request
 
 WP_SITE = os.getenv("WP_SITE")
 WP_USER = os.getenv("WP_USER")
@@ -17,17 +18,18 @@ ARTICULOS = [
 ]
 
 def extraer_titulo_y_cuerpo(link):
-    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/117.0.0.0 Safari/537.36'}
-    downloaded = trafilatura.fetch_url(link, request_kwargs={"headers": headers})
-    if not downloaded:
-        raise Exception("No se pudo descargar la página")
+    req = urllib.request.Request(link, headers={
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/117.0.0.0 Safari/537.36'
+    })
+    with urllib.request.urlopen(req, timeout=30) as response:
+        html = response.read().decode('utf-8')
 
-    parsed = trafilatura.extract(downloaded, include_comments=False, include_tables=False, output_format="json")
-    if not parsed:
+    downloaded = trafilatura.extract(html, include_comments=False, include_tables=False, output_format="json")
+    if not downloaded:
         raise Exception("No se pudo extraer contenido")
 
     import json
-    parsed = json.loads(parsed)
+    parsed = json.loads(downloaded)
     titulo = parsed.get("title", "Sin título")
     texto = parsed.get("text", "").strip().replace("\\n", "<br><br>")
     cuerpo = texto + f'<br><br><p><strong>Fuente:</strong> <a href="{link}" target="_blank" rel="noopener">Ver nota original</a></p>'
@@ -72,8 +74,10 @@ def main():
 if __name__ == "__main__":
     main()
 
-# Guardar el archivo
-path = Path("/mnt/data/news_ai_poster_user_agent.py")
+
+# Guardar el archivo actualizado
+path = Path("/mnt/data/news_ai_poster_fixed.py")
 path.write_text(script_code.strip())
 
 path.name
+
