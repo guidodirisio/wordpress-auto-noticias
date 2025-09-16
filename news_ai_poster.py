@@ -17,7 +17,7 @@ NEWS_CATEGORY_ID = int(os.getenv("NEWS_CATEGORY_ID", "0"))  # obligatorio idealm
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (compatible; InteresGeneralBot/1.0; +https://interesgeneral.com.ar)"
 }
-TIMEOUT = 15
+TIMEOUT = 45
 
 # Portales (home) y heurísticas de enlace "válido"
 PORTALES = [
