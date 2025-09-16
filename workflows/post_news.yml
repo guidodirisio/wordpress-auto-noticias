@@ -1,20 +1,28 @@
-name: Publicar noticia con IA (cada hora)
+name: Publicar noticias automatizadas
 
 on:
   schedule:
-    - cron: "0 * * * *"   # cada hora (UTC)
-  workflow_dispatch:
+    # Ejecutar cada 2 horas a los :30, respetando horarios especiales
+    - cron: '30 11,21 * * *'        # 8:30 y 18:30 hora Argentina (11:30 y 21:30 UTC) - Google News
+    - cron: '30 3,5,7,9,13,15,17,19,23,1 * * *'   # Otros horarios cada 2h (AR: 0:30,2:30,...,22:30)
+  workflow_dispatch:    # Permite ejecución manual desde la interfaz de Actions (opcional)
 
 jobs:
-  run:
+  post_news:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - name: Checkout repo
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v3
         with:
-          python-version: "3.11"
-      - run: pip install -r requirements.txt
-      - name: Ejecutar script
+          python-version: '3.10'   # Usaremos Python 3.10 (o 3.x disponible)
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run news posting script
         env:
           WP_SITE: ${{ secrets.WP_SITE }}
           WP_USER: ${{ secrets.WP_USER }}
