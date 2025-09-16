@@ -91,16 +91,24 @@ def extraer_titulo_y_parrafos(url):
     downloaded = trafilatura.fetch_url(url)
     if not downloaded:
         return None, []
-    result = trafilatura.extract(downloaded, include_comments=False, include_tables=False, favor_recall=True, output="json")
-    if not result:
+    
+    json_text = trafilatura.extract(
+        downloaded,
+        include_comments=False,
+        include_tables=False,
+        favor_recall=True,
+        json_output=True
+    )
+    if not json_text:
         return None, []
+    
     import json
-    data = json.loads(result)
+    data = json.loads(json_text)
     titulo = data.get("title")
     texto = data.get("text") or ""
-    # Normalizar y tomar primeros 3 párrafos reales
     paras = [p.strip() for p in texto.split("\n") if p.strip()]
     return titulo, paras[:3]
+
 
 def extraer_imagen(url, fallback_html=None):
     # intentar metadatos con trafilatura primero
