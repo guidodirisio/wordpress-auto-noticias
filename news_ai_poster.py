@@ -1,249 +1,265 @@
-import os, requests, base64, datetime
-from zoneinfo import ZoneInfo      # Para manejar huso horario
-from bs4 import BeautifulSoup      # Para parsear HTML y extraer contenido
-import feedparser                 # Para leer fuentes RSS (Google News)
-import openai                      # Cliente de OpenAI API
+# news_ai_poster.py
+import os, re, math, time
+from datetime import datetime
+from urllib.parse import urljoin, urlparse
 
-# Leer variables de entorno (credenciales y configuraciones)
-WP_SITE = os.environ["WP_SITE"]       # URL del sitio WordPress, ej: "https://interesgeneral.com.ar"
-WP_USER = os.environ["WP_USER"]       # Usuario de WP
-WP_PASS = os.environ["WP_PASS"]       # Contraseña de aplicación de WP
-OPENAI_API_KEY = os.environ["OPENAI_API_KEY"]  # Clave de API de OpenAI
-CATEGORY_ID = os.environ["NEWS_CATEGORY_ID"]   # ID de categoría "Noticias"
-openai.api_key = OPENAI_API_KEY       # Configurar clave para OpenAI
+import requests
+from bs4 import BeautifulSoup
+import trafilatura
 
-# Lista de fuentes/portales para rotar en horarios no principales
-news_sources = [
-    {"name": "Clarín - Internacional", "url": "https://www.clarin.com/rss/lo-ultimo/"},
-    {"name": "La Nación - Deportes", "url": "https://www.lanacion.com.ar/rss/deportes/"},
-    {"name": "TN - Sociedad", "url": "https://tn.com.ar/rss/sociedad.xml"},
-    {"name": "Infobae - Economía", "url": "https://www.infobae.com/feeds/rss/economia.xml"},
-    {"name": "Ámbito - Últimas", "url": "https://www.ambito.com/ultimo-momento.xml"},
-    {"name": "El Canciller - Política", "url": "https://elcanciller.com/rss"} 
+# ---------- Config ----------
+WP_SITE = os.getenv("WP_SITE", "").rstrip("/")
+WP_USER = os.getenv("WP_USER")
+WP_PASS = os.getenv("WP_PASS")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+NEWS_CATEGORY_ID = int(os.getenv("NEWS_CATEGORY_ID", "0"))  # obligatorio idealmente
+
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (compatible; InteresGeneralBot/1.0; +https://interesgeneral.com.ar)"
+}
+TIMEOUT = 15
+
+# Portales (home) y heurísticas de enlace "válido"
+PORTALES = [
+    "https://www.clarin.com/",
+    "https://www.lanacion.com.ar/",
+    "https://tn.com.ar/",
+    "https://www.infobae.com/",
+    "https://www.ambito.com/",
+    "https://elcanciller.com/"
 ]
 
+SECCIONES = ["politica", "economia", "internacional"]
 
-# Determinar hora actual en Argentina
-now = datetime.datetime.now(ZoneInfo("America/Argentina/Buenos_Aires"))
-current_hour = now.hour
-current_minute = now.minute
+# Palabras que suelen aparecer en URLs de notas (heurística simple)
+ARTICLE_HINTS = [
+    "/politica", "/economia", "/internacional", "/mundo", "/opinion", "/sociedad",
+    "/deportes", "/show", "/negocios", "/n/","/nota","/noticia","/articulo","/202","/20"
+]
+# Evitar links no-nota
+BLOCK_HINTS = ["/tag/", "/tags/", "/author", "/autores", "/suscripcion", "/subscribe",
+               "/newsletter", "/temas", "/ayuda", "/faq", "/login", "/registro", "/terminos"]
 
-use_google_news = False
-if current_hour == 8 and current_minute == 30:
-    use_google_news = True
-if current_hour == 18 and current_minute == 30:
-    use_google_news = True
+# ---------- Helpers ----------
+def elegir_portal_y_seccion():
+    horas = math.floor(datetime.utcnow().timestamp()/3600)
+    portal = PORTALES[horas % len(PORTALES)]
+    seccion = SECCIONES[horas % len(SECCIONES)]
+    return portal, seccion
 
-if use_google_news:
-    feed_url = "https://news.google.com/rss?hl=es-419&gl=AR&ceid=AR:es-419"
-    feed = feedparser.parse(feed_url)
-    if feed.entries:
-        top_entry = feed.entries[0]
-        original_title = top_entry.title
-        original_url = top_entry.link
-    else:
-        print("Google News RSS sin entradas.")
-        # Si no se pudo obtener nada de Google News, salimos del script.
-        exit(0)
+def get_html(url):
+    r = requests.get(url, headers=HEADERS, timeout=TIMEOUT)
+    r.raise_for_status()
+    r.encoding = r.apparent_encoding or r.encoding
+    return r.text
 
-else:
-    # Seleccionar una fuente de la lista en función de la hora actual (ejemplo de rotación)
-    index = (current_hour // 2) % len(news_sources)
-    source = news_sources[index]
-    source_name = source["name"]
-    source_url = source["url"]
-    print(f"Fuente seleccionada: {source_name} - {source_url}")
-    # Obtener la noticia más reciente de esa fuente (suponiendo que es RSS)
-    if source_url.endswith(".xml") or source_url.endswith("/rss") or source_url.endswith("/rss/"):
-        feed = feedparser.parse(source_url)
-        if feed.entries:
-            entry = feed.entries[0]
-            original_title = entry.title
-            original_url = entry.link
-        else:
-            print(f"No se encontraron entradas en {source_name}.")
-            exit(0)
-    else:
-        # Si la fuente no es RSS sino una página HTML, hacer scraping:
-        resp = requests.get(source_url, headers={"User-Agent": "Mozilla/5.0"})
-        soup = BeautifulSoup(resp.text, "html.parser")
-        # (Aquí se debería extraer el enlace de la noticia principal de la página)
-        # Esto es muy específico de cada portal; como ejemplo básico:
-        first_article = soup.find('a')  # *Esto se debe ajustar según la estructura real*
-        if not first_article:
-            print(f"No se pudo extraer noticia de {source_name}")
-            exit(0)
-        original_url = first_article['href']
-        original_title = first_article.get_text() or "Título no disponible"
+def absolutize(base, href):
+    if not href: return None
+    if href.startswith("http"): return href
+    if href.startswith("//"): return "https:" + href
+    return urljoin(base, href)
 
+def es_link_nota(base, href):
+    if not href: return False
+    href = absolutize(base, href)
+    if not href: return False
+    if urlparse(href).netloc not in urlparse(base).netloc:
+        return False
+    if any(b in href for b in BLOCK_HINTS):
+        return False
+    return any(h in href for h in ARTICLE_HINTS)
 
-# Descargar la página de la noticia original
-headers = {"User-Agent": "Mozilla/5.0"}  # Cabecera de agente para simular navegador
-try:
-    resp = requests.get(original_url, headers=headers, timeout=10)
-except Exception as e:
-    print(f"Error al solicitar la noticia original: {e}")
-    exit(0)
+def encontrar_primer_link_nota(home_url, html, seccion_hint=None):
+    soup = BeautifulSoup(html, "html.parser")
+    # priorizar links que contengan la sección sugerida
+    anchors = soup.find_all("a", href=True)
+    # 1) si hay seccion, priorizamos
+    if seccion_hint:
+        for a in anchors:
+            href = absolutize(home_url, a["href"])
+            if href and seccion_hint in href and es_link_nota(home_url, href):
+                return href
+    # 2) si no, primer enlace "de nota" creíble
+    for a in anchors:
+        href = absolutize(home_url, a["href"])
+        if es_link_nota(home_url, href):
+            return href
+    return None
 
-if resp.status_code != 200:
-    print(f"No se pudo obtener la noticia, código {resp.status_code}")
-    exit(0)
+def extraer_titulo_y_parrafos(url):
+    # Usamos trafilatura para extraer main text y meta
+    downloaded = trafilatura.fetch_url(url)
+    if not downloaded:
+        return None, []
+    result = trafilatura.extract(downloaded, include_comments=False, include_tables=False, favor_recall=True, output="json")
+    if not result:
+        return None, []
+    import json
+    data = json.loads(result)
+    titulo = data.get("title")
+    texto = data.get("text") or ""
+    # Normalizar y tomar primeros 3 párrafos reales
+    paras = [p.strip() for p in texto.split("\n") if p.strip()]
+    return titulo, paras[:3]
 
-html = resp.text
-soup = BeautifulSoup(html, "html.parser")
+def extraer_imagen(url, fallback_html=None):
+    # intentar metadatos con trafilatura primero
+    downloaded = trafilatura.fetch_url(url)
+    if downloaded:
+        meta = trafilatura.extract(downloaded, output="json")
+        if meta:
+            import json
+            md = json.loads(meta)
+            img = md.get("image")
+            if img and img.startswith("http"):
+                return img
+    # fallback: parsear HTML si se pasó
+    html = fallback_html or get_html(url)
+    soup = BeautifulSoup(html, "html.parser")
+    og = soup.find("meta", property="og:image")
+    if og and og.get("content"): return absolutize(url, og["content"])
+    tw = soup.find("meta", attrs={"name":"twitter:image"})
+    if tw and tw.get("content"): return absolutize(url, tw["content"])
+    img = soup.find("img")
+    if img and img.get("src"): return absolutize(url, img["src"])
+    return None
 
-# Extraer título (si no lo teníamos de antes o para confirmarlo)
-page_title = ""
-title_tag = soup.find('meta', property='og:title')
-if title_tag and title_tag.get("content"):
-    page_title = title_tag["content"]
-else:
-    # fallback: buscar <title> o <h1>
-    if soup.title:
-        page_title = soup.title.get_text()
-    elif soup.find('h1'):
-        page_title = soup.find('h1').get_text()
-# Usaremos el título de la página preferentemente, pero 
-# mantenemos original_title como respaldo
-if page_title:
-    original_title = page_title.strip()
-
-# Extraer primeros 2-3 párrafos del cuerpo
-paragraphs = soup.find_all('p')
-content_text = ""
-para_count = 0
-for p in paragraphs:
-    text = p.get_text().strip()
-    # Omite párrafos vacíos o muy cortos que puedan ser subtítulos o datos irrelevantes
-    if len(text) < 30:
-        continue
-    content_text += text + "\n\n"
-    para_count += 1
-    if para_count >= 3:
-        break
-
-if not content_text:
-    content_text = "(No se pudo extraer el contenido del artículo)"
-
-# Extraer URL de imagen destacada
-img_url = None
-img_tag = soup.find('meta', property='og:image')
-if img_tag and img_tag.get("content"):
-    img_url = img_tag["content"]
-else:
-    img_tag = soup.find('meta', attrs={"name": "twitter:image"})
-    if img_tag and img_tag.get("content"):
-        img_url = img_tag["content"]
-# Si aún no, buscar la primera <img> en el contenido
-if not img_url:
-    first_img = soup.find('img')
-    if first_img and first_img.get("src"):
-        img_url = first_img["src"]
-
-# Descargar la imagen si hay URL
-image_data = None
-if img_url:
-    try:
-        img_resp = requests.get(img_url, headers=headers, timeout=10)
-        if img_resp.status_code == 200:
-            image_data = img_resp.content  # bytes de la imagen
-    except Exception as e:
-        print(f"No se pudo descargar la imagen: {e}")
-        image_data = None
-
-# Preparar prompt para OpenAI
-prompt = (
-    "Reformula la siguiente noticia en un tono informativo, neutro y factual.\n"
-    "1. Crea un título nuevo de máximo 20 palabras.\n"
-    "2. Escribe un cuerpo (texto principal) de exactamente 100 caracteres.\n\n"
-    f"Título original: {original_title}\n"
-    f"Contenido original: {content_text}\n\n"
-    "Devuelve la respuesta con el formato:\n"
-    "TÍTULO: <nuevo título>\n"
-    "CUERPO: <texto de 100 caracteres>\n"
-)
-try:
-    response = openai.ChatCompletion.create(
-        model="gpt-3.5-turbo",
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0  # 0 para mayor determinismo en la respuesta
+def openai_reformatear(titulo, parrafos):
+    """Devuelve (titulo_limpio, cuerpo_100_chars)."""
+    body_src = (titulo or "") + "\n\n" + "\n\n".join(parrafos or [])
+    body_src = body_src.strip()[:2000]  # limitar tokens de entrada
+    # Prompt para garantizar formato exacto
+    system = (
+        "Sos redactor. Devolvés exactamente dos bloques:\n"
+        "1) Una sola línea: TÍTULO (sin comillas)\n"
+        "2) Una sola línea: CUERPO de EXACTAMENTE 100 caracteres (sin contar saltos de línea).\n"
+        "Tono informativo, neutro, sin inventar datos."
     )
-except Exception as e:
-    print(f"Error al llamar a OpenAI API: {e}")
-    exit(0)
-
-reply = response['choices'][0]['message']['content']
-# Parsear la respuesta para separar título y cuerpo
-new_title = ""
-new_body = ""
-for line in reply.splitlines():
-    line = line.strip()
-    if line.lower().startswith("título"):
-        new_title = line.split(":", 1)[1].strip()
-    elif line.lower().startswith("cuerpo"):
-        new_body = line.split(":", 1)[1].strip()
-# En caso de que la respuesta no viniera formateada como esperamos:
-if not new_title or not new_body:
-    # Como respaldo, tomar la primera línea como título y el resto como cuerpo
-    lines = reply.splitlines()
-    if lines:
-        new_title = lines[0].strip()
-        new_body = "".join(lines[1:]).strip()
-# Asegurar que el cuerpo tenga exactamente 100 caracteres
-new_body = new_body.strip()
-if len(new_body) != 100:
-    # Si es más largo, recortar; si es más corto, podemos rellenar con un espacio o ajustar.
-    new_body = new_body[:100]
-    new_body = new_body.ljust(100)[:100]
-
-media_id = None
-if image_data:
-    media_endpoint = f"{WP_SITE}/wp-json/wp/v2/media"
-    filename = "destacada.jpg"
+    user = (
+        "Reescribí el siguiente material de noticia. Título en una línea, "
+        "y luego CUERPO de exactamente 100 caracteres (cortá con criterio si hace falta):\n\n"
+        f"{body_src}"
+    )
     try:
-        media_resp = requests.post(
-            media_endpoint,
-            auth=(WP_USER, WP_PASS),
-            headers={
-                "Content-Disposition": f'attachment; filename="{filename}"'
-            },
-            files={"file": image_data}
+        import openai
+        openai.api_key = OPENAI_API_KEY
+        resp = openai.ChatCompletion.create(
+            model="gpt-3.5-turbo",
+            messages=[{"role":"system","content":system},{"role":"user","content":user}],
+            temperature=0.2,
+            max_tokens=180
         )
+        text = resp.choices[0].message.content.strip()
     except Exception as e:
-        print(f"Error al subir imagen destacada: {e}")
-        media_resp = None
-    if media_resp and media_resp.status_code == 201:
-        media_id = media_resp.json().get("id")
-        print(f"Imagen subida. ID={media_id}")
+        # Fallback sin IA: recortar
+        print("OpenAI error:", e)
+        return (titulo[:120] if titulo else "Noticias"), compone_cuerpo_100(" ".join(parrafos) if parrafos else "")
+
+    # Parsear dos líneas
+    lines = [l.strip() for l in text.split("\n") if l.strip()]
+    if not lines:
+        return (titulo[:120] if titulo else "Noticias"), compone_cuerpo_100(" ".join(parrafos) if parrafos else "")
+    title_out = lines[0]
+    body_out = lines[-1] if len(lines) > 1 else ""
+    # Asegurar 100 caracteres exactos
+    body_out = compone_cuerpo_100(body_out)
+    return title_out, body_out
+
+def compone_cuerpo_100(texto):
+    # Limpia y ajusta a EXACTAMENTE 100 caracteres, sin cortar groseramente la última palabra
+    s = re.sub(r"\s+", " ", texto).strip()
+    if len(s) == 100:
+        return s
+    if len(s) > 100:
+        # cortar a <=100, intentando no partir palabra
+        cut = s[:100]
+        # si cortó en medio de palabra, retrocede hasta espacio si existe
+        if len(s) > 100 and not s[100:101].isspace():
+            if " " in cut:
+                cut = cut[:cut.rfind(" ")]
+        return cut[:100].rstrip().ljust(100, " ")[:100]
+    # si es más corto, rellena con espacios (para EXACTO 100). Si no querés rellenar, podés no hacerlo.
+    return s.ljust(100, " ")[:100]
+
+def upload_image_to_wp(img_url):
+    try:
+        r = requests.get(img_url, headers=HEADERS, timeout=TIMEOUT)
+        r.raise_for_status()
+        content = r.content
+        # inferir mime por extensión
+        ext = img_url.split("?")[0].split(".")[-1].lower()
+        mime = {"jpg":"image/jpeg","jpeg":"image/jpeg","png":"image/png","webp":"image/webp"}.get(ext,"image/jpeg")
+        filename = os.path.basename(urlparse(img_url).path) or "image.jpg"
+        media_url = f"{WP_SITE}/wp-json/wp/v2/media"
+        mr = requests.post(
+            media_url,
+            headers={"Content-Type": mime, "Content-Disposition": f'attachment; filename="{filename}"'},
+            data=content,
+            auth=(WP_USER, WP_PASS),
+            timeout=TIMEOUT
+        )
+        if mr.status_code in (200,201):
+            return mr.json().get("id")
+        print("Fallo media:", mr.status_code, mr.text[:300])
+    except Exception as e:
+        print("No se pudo subir imagen:", e)
+    return None
+
+def crear_post_wp(titulo, cuerpo100, fuente_url, imagen_id=None):
+    post_url = f"{WP_SITE}/wp-json/wp/v2/posts"
+    html = f"<p>{cuerpo100}</p>\n<p><strong>Fuente:</strong> <a href=\"{fuente_url}\" target=\"_blank\" rel=\"noopener\">Leer original</a></p>"
+    data = {
+        "title": titulo,
+        "content": html,
+        "status": "draft",
+        "format": "standard"
+    }
+    if NEWS_CATEGORY_ID:
+        data["categories"] = [NEWS_CATEGORY_ID]
+    if imagen_id:
+        data["featured_media"] = imagen_id
+    pr = requests.post(post_url, json=data, auth=(WP_USER, WP_PASS), timeout=TIMEOUT)
+    if pr.status_code in (200,201):
+        out = pr.json()
+        print("Borrador creado:", out.get("id"), out.get("link"))
     else:
-        if media_resp:
-            print(f"No se pudo subir la imagen. Código: {media_resp.status_code}, Respuesta: {media_resp.text}")
+        print("Error creando post:", pr.status_code, pr.text[:400])
 
-# Construir el contenido del post incluyendo la fuente original
-post_content = new_body.strip()
-post_content += f"\n\n<p>Fuente: <a href=\"{original_url}\" target=\"_blank\">Ver noticia original</a></p>"
+def main():
+    if not all([WP_SITE, WP_USER, WP_PASS]):
+        raise SystemExit("Faltan WP_SITE / WP_USER / WP_PASS")
+    if not OPENAI_API_KEY:
+        print("Aviso: falta OPENAI_API_KEY, se usará fallback sin IA.")
 
-# Construir los datos del post
-post_data = {
-    "title": new_title.strip(),
-    "content": post_content,
-    "status": "draft",             # Publicar como borrador
-    "categories": [int(CATEGORY_ID)],  # Asignar categoría "Noticias"
-    "format": "standard"          # Formato estándar de post
-}
-if media_id:
-    post_data["featured_media"] = media_id
+    portal_home, seccion = elegir_portal_y_seccion()
+    print("Portal:", portal_home, "- Sección:", seccion)
 
-# Enviar petición para crear el post
-posts_endpoint = f"{WP_SITE}/wp-json/wp/v2/posts"
-try:
-    post_resp = requests.post(posts_endpoint, auth=(WP_USER, WP_PASS), json=post_data)
-except Exception as e:
-    print(f"Error al crear la entrada de WP: {e}")
-    exit(0)
+    # 1) Obtener home y primer link de nota
+    home_html = get_html(portal_home)
+    link = encontrar_primer_link_nota(portal_home, home_html, seccion_hint=seccion)
+    if not link:
+        raise SystemExit("No se encontró link de nota en el home")
 
-if post_resp.status_code == 201:
-    post_id = post_resp.json().get("id")
+    print("Artículo:", link)
+
+    # 2) Extraer título + 3 párrafos
+    titulo_src, parrafos = extraer_titulo_y_parrafos(link)
+    if not titulo_src and not parrafos:
+        raise SystemExit("No se pudo extraer contenido de la nota")
+
+    # 3) Imagen
+    img_url = extraer_imagen(link, fallback_html=home_html)
+    feat_id = upload_image_to_wp(img_url) if img_url else None
+
+    # 4) IA: TÍTULO + CUERPO 100 caracteres
+    titulo_final, cuerpo_100 = openai_reformatear(titulo_src, parrafos)
+
+    # 5) Crear post en WP (borrador)
+    crear_post_wp(titulo_final, cuerpo_100, link, imagen_id=feat_id)
+
+if __name__ == "__main__":
+    main()
+
     print(f"Entrada de WordPress creada exitosamente (ID={post_id})")
 else:
     print(f"Fallo al crear entrada. Código: {post_resp.status_code}, Respuesta: {post_resp.text}")
