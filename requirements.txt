@@ -1,5 +1,4 @@
 requests
 beautifulsoup4
 trafilatura==1.4.1
-openai==0.28.1
 lxml
