@@ -1,3 +1,6 @@
+from pathlib import Path
+
+# Código actualizado con User-Agent en fetch_url
 import os
 import random
 import requests
@@ -8,14 +11,14 @@ WP_USER = os.getenv("WP_USER")
 WP_PASS = os.getenv("WP_PASS")
 TIMEOUT = 90
 
-# Lista de artículos y secciones (puede automatizarse con RSS o scrapers)
 ARTICULOS = [
     {"url": "https://www.clarin.com/politica/escandalo-audios-ahora-abogado-cristina-denuncio-cerimedo-esposa-funcionaria-spagnuolo-andis_0_c***5oVC5FJ2.html", "seccion": "politica"},
     {"url": "https://www.ambito.com/economia/el-presupuesto-2026-preve-aumentos-jubilados-discapacitados-universidades-y-salud-n6***90773", "seccion": "economia"},
 ]
 
 def extraer_titulo_y_cuerpo(link):
-    downloaded = trafilatura.fetch_url(link)
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/117.0.0.0 Safari/537.36'}
+    downloaded = trafilatura.fetch_url(link, request_kwargs={"headers": headers})
     if not downloaded:
         raise Exception("No se pudo descargar la página")
 
@@ -26,7 +29,7 @@ def extraer_titulo_y_cuerpo(link):
     import json
     parsed = json.loads(parsed)
     titulo = parsed.get("title", "Sin título")
-    texto = parsed.get("text", "").strip().replace("\n", "<br><br>")
+    texto = parsed.get("text", "").strip().replace("\\n", "<br><br>")
     cuerpo = texto + f'<br><br><p><strong>Fuente:</strong> <a href="{link}" target="_blank" rel="noopener">Ver nota original</a></p>'
     return titulo, cuerpo
 
@@ -68,3 +71,9 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+# Guardar el archivo
+path = Path("/mnt/data/news_ai_poster_user_agent.py")
+path.write_text(script_code.strip())
+
+path.name
