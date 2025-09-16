@@ -1,5 +1,5 @@
 requests
 beautifulsoup4
-trafilatura
+trafilatura==1.4.1
 openai
 lxml
