@@ -97,7 +97,7 @@ def extraer_titulo_y_parrafos(url):
     include_comments=False,
     include_tables=False,
     favor_recall=True,
-    json_output=True
+    output_format="json"
     )
 
     if not json_text:
