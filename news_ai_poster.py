@@ -1,5 +1,5 @@
 # news_ai_poster.py
-import os, re, math, time
+import os, re, math, time, json
 from datetime import datetime
 from urllib.parse import urljoin, urlparse
 
