@@ -1,11 +1,11 @@
-from pathlib import Path
+# news_ai_poster_fixed.py
 
-# Código corregido usando urllib.request en lugar de request_kwargs
 import os
 import random
 import requests
 import trafilatura
 import urllib.request
+import json
 
 WP_SITE = os.getenv("WP_SITE")
 WP_USER = os.getenv("WP_USER")
@@ -28,10 +28,9 @@ def extraer_titulo_y_cuerpo(link):
     if not downloaded:
         raise Exception("No se pudo extraer contenido")
 
-    import json
     parsed = json.loads(downloaded)
     titulo = parsed.get("title", "Sin título")
-    texto = parsed.get("text", "").strip().replace("\\n", "<br><br>")
+    texto = parsed.get("text", "").strip().replace("\n", "<br><br>")
     cuerpo = texto + f'<br><br><p><strong>Fuente:</strong> <a href="{link}" target="_blank" rel="noopener">Ver nota original</a></p>'
     return titulo, cuerpo
 
@@ -73,11 +72,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
-# Guardar el archivo actualizado
-path = Path("/mnt/data/news_ai_poster_fixed.py")
-path.write_text(script_code.strip())
-
-path.name
-
