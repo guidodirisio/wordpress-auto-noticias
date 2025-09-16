@@ -232,7 +232,21 @@ def crear_post_wp(titulo, cuerpo100, fuente_url, imagen_id=None):
         data["categories"] = [NEWS_CATEGORY_ID]
     if imagen_id:
         data["featured_media"] = imagen_id
-    pr = requests.post(post_url, json=data, auth=(WP_USER, WP_PASS), timeout=TIMEOUT)
+
+    import time
+    import requests
+    
+    def post_with_retries(url, json, auth, timeout=45, max_retries=3):
+        for i in range(max_retries):
+            try:
+                return requests.post(url, json=json, auth=auth, timeout=timeout)
+            except requests.exceptions.ReadTimeout:
+                print(f"Timeout al intentar publicar en WordPress. Reintentando ({i+1}/{max_retries})...")
+                time.sleep(5)
+        raise Exception("No se pudo publicar en WordPress tras múltiples intentos.")
+
+    pr = post_with_retries(post_url, json=data, auth=(WP_USER, WP_PASS), timeout=TIMEOUT)
+    
     if pr.status_code in (200,201):
         out = pr.json()
         print("Borrador creado:", out.get("id"), out.get("link"))
