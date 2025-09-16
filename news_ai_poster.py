@@ -93,12 +93,13 @@ def extraer_titulo_y_parrafos(url):
         return None, []
     
     json_text = trafilatura.extract(
-        downloaded,
-        include_comments=False,
-        include_tables=False,
-        favor_recall=True,
-        json_output=True
+    downloaded,
+    include_comments=False,
+    include_tables=False,
+    favor_recall=True,
+    json_output=True
     )
+
     if not json_text:
         return None, []
     
