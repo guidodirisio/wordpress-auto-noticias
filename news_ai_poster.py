@@ -8,8 +8,8 @@ import trafilatura
 WP_SITE = os.getenv("WP_SITE")
 WP_USER = os.getenv("WP_USER")
 WP_PASS = os.getenv("WP_PASS")
-TIMEOUT = 30
-CATEGORIA_ID = 2  # ← Cambiá si tu categoría "Noticias" tiene otro ID
+TIMEOUT = 90
+CATEGORIA_ID = 1  # ← Cambiá si tu categoría "Noticias" tiene otro ID
 
 # PORTALES Y SECCIONES
 portales = {
