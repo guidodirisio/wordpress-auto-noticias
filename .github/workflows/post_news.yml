@@ -1,0 +1,24 @@
+name: Publicar noticia con IA (cada hora)
+
+on:
+  schedule:
+    - cron: "0 * * * *"   # cada hora (UTC)
+  workflow_dispatch:
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r requirements.txt
+      - name: Ejecutar script
+        env:
+          WP_SITE: ${{ secrets.WP_SITE }}
+          WP_USER: ${{ secrets.WP_USER }}
+          WP_PASS: ${{ secrets.WP_PASS }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          NEWS_CATEGORY_ID: ${{ secrets.NEWS_CATEGORY_ID }}
+        run: python news_ai_poster.py
