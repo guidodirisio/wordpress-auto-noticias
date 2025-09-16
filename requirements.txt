@@ -1,6 +1,4 @@
 requests
 beautifulsoup4
-trafilatura
+feedparser
 openai
-lxml
-
