@@ -115,13 +115,18 @@ def extraer_imagen(url, fallback_html=None):
     # intentar metadatos con trafilatura primero
     downloaded = trafilatura.fetch_url(url)
     if downloaded:
-        meta = trafilatura.extract(downloaded, output="json")
-        if meta:
-            import json
+        meta = trafilatura.extract(downloaded, output_format="json")
+        if not meta:
+            return None
+        try:
             md = json.loads(meta)
-            img = md.get("image")
-            if img and img.startswith("http"):
-                return img
+        except json.JSONDecodeError:
+            return None
+        img = md.get("image")
+        if img and img.startswith("http"):
+            return img
+
+    
     # fallback: parsear HTML si se pasó
     html = fallback_html or get_html(url)
     soup = BeautifulSoup(html, "html.parser")
